@@ -13,36 +13,23 @@ if len(sys.argv) != 2:
 urls_file = sys.argv[1]
 
 # server, port, and path should be parsed from url
-with open(urls_file, 'r') as f:
-    urls = f.readlines()
-
-
-def fetch_url(url):
+# function to fetch URL and return status, headers, body
+def fetch(url):
     parsed = urlparse(url)
     host = parsed.hostname
     path = parsed.path if parsed.path else '/'
+    port = 443 if parsed.scheme == 'https' else 80
 
-    sock = None
     try:
-        # create client socket, connect to server
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
-
         if parsed.scheme == 'https':
             context = ssl.create_default_context()
-            port = 443
             sock = context.wrap_socket(sock, server_hostname=host)
-        else:
-            port = 80
-
         sock.connect((host, port))
 
-        # send http request
-        request = f'GET {path} HTTP/1.0\r\n'
-        request += f'Host: {host}\r\n'
-        request += '\r\n'
-
-        sock.send(request.encode())
+        # send simple HTTP GET
+        sock.send(f'GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n'.encode())
 
         # receive http response
         response = b''
@@ -52,68 +39,45 @@ def fetch_url(url):
                 break
             response += data
 
-        response_text = response.decode('utf-8', errors='ignore')
-        parts = response_text.split('\r\n\r\n', 1)
-        headers = parts[0]
-        body = parts[1] if len(parts) > 1 else ''
-
-        status_line = headers.split('\r\n')[0]
-        status = status_line.split(' ', 1)[1]
-
+        text = response.decode('utf-8', errors='ignore')
+        headers, _, body = text.partition('\r\n\r\n')
+        status = headers.split('\r\n')[0].split(' ', 1)[1]
         return status, headers, body
+
 
     except:
         return "Network Error", None, None
 
     finally:
-        if sock:
             sock.close()
 
 
-for url in urls:
-    url = url.strip()
-    if not url:
-        continue
-
-    print(f"URL: {url}")
-
-    status, headers, body = fetch_url(url)
-    print(f"Status: {status}")
-
-    # Follow URL redirection
-    if status.startswith("301") or status.startswith("302"):
-        if headers:
-            for line in headers.split('\r\n'):
-                if line.lower().startswith("location:"):
-                    redirected_url = line.split(":", 1)[1].strip()
-                    print(f"Redirected URL: {redirected_url}")
-
-                    new_status, _, _ = fetch_url(redirected_url)
-                    print(f"Status: {new_status}")
-                    break
-
-    # Fetch referenced object (images only)
-if body and "<img" in body.lower() and "inet.cs.fiu.edu" in url:
-    matches = re.findall(r'<img[^>]+src=["\']?([^"\'>]+)', body, re.IGNORECASE)
-
-    for img_url in matches:
-
-        # ignore embedded base64 images
-        if img_url.startswith("data:"):
+with open(urls_file, 'r') as f:
+    for url in f:
+        url = url.strip()
+        if not url:
             continue
 
-        if img_url.startswith("http"):
-            full_img_url = img_url
-        else:
-            parsed = urlparse(url)
-            full_img_url = f"{parsed.scheme}://{parsed.hostname}{img_url}"
+    print(f"URL: {url}")
+    status, headers, body = fetch(url)
+    print(f"Status: {status}")
 
-        print(f"Referenced URL: {full_img_url}")
+    if status.startswith("301") or status.startswith("302"):
+        if headers:
+            for line in headers.splitlines():
+                if line.lower().startswith("location:"):
+                    redirect = line.split(":", 1)[1].strip()
+                    print(f"Redirected URL: {redirect}")
+                    r_status, _, _ = fetch(redirect)
+                    print(f"Status: {r_status}")
+                    break
 
-        img_status, _, _ = fetch_url(full_img_url)
-        print(f"Status: {img_status}")
-
-
-
-
-
+        if body and "inet.cs.fiu.edu" in url:
+            import re
+            for img in re.findall(r'<img[^>]+src=["\']?([^"\'>]+)', body, re.IGNORECASE):
+                if img.startswith("data:"):  # skip embedded images
+                    continue
+                full_img = img if img.startswith("http") else f"{parsed.scheme}://{parsed.hostname}{img}"
+                print(f"Referenced URL: {full_img}")
+                img_status, _, _ = fetch(full_img)
+                print(f"Status: {img_status}")
