@@ -66,8 +66,7 @@ def fetch_url(url):
         return "Network Error", None, None
 
     finally:
-        if sock:
-            sock.close()
+        sock.close()
 
 
 for url in urls:
@@ -76,11 +75,10 @@ for url in urls:
         continue
 
     print(f"URL: {url}")
-
     status, headers, body = fetch_url(url)
     print(f"Status: {status}")
 
-    # Follow URL redirection
+    # URL redirection
     if status.startswith("301") or status.startswith("302"):
         if headers:
             for line in headers.split('\r\n'):
@@ -92,28 +90,13 @@ for url in urls:
                     print(f"Status: {new_status}")
                     break
 
-    # Fetch referenced object (images only)
-if body and "<img" in body.lower() and "inet.cs.fiu.edu" in url:
-    matches = re.findall(r'<img[^>]+src=["\']?([^"\'>]+)', body, re.IGNORECASE)
 
-    for img_url in matches:
-
-        # ignore embedded base64 images
-        if img_url.startswith("data:"):
-            continue
-
-        if img_url.startswith("http"):
-            full_img_url = img_url
-        else:
-            parsed = urlparse(url)
-            full_img_url = f"{parsed.scheme}://{parsed.hostname}{img_url}"
-
-        print(f"Referenced URL: {full_img_url}")
-
-        img_status, _, _ = fetch_url(full_img_url)
-        print(f"Status: {img_status}")
-
-
-
-
-
+if body and "inet.cs.fiu.edu" in url:
+            import re
+            for img in re.findall(r'<img[^>]+src=["\']?([^"\'>]+)', body, re.IGNORECASE):
+                if img.startswith("data:"):
+                    continue
+                full_img = img if img.startswith("http") else f"{parsed.scheme}://{parsed.hostname}{img}"
+                print(f"Referenced URL: {full_img}")
+                img_status, _, _ = fetch(full_img)
+                print(f"Status: {img_status}")
