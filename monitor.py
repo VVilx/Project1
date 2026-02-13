@@ -2,6 +2,7 @@ import sys
 import socket
 from urllib.parse import urlparse
 import ssl
+import re
 
 # get urls_file name from command line
 if len(sys.argv) != 2:
@@ -15,30 +16,25 @@ urls_file = sys.argv[1]
 with open(urls_file, 'r') as f:
     urls = f.readlines()
 
-for url in urls:
-    url = url.strip()
-    if not url:
-        continue
 
-    print(f"URL: {url}")
-
+def fetch_url(url):
     parsed = urlparse(url)
-
     host = parsed.hostname
-    path = parsed.path
+    path = parsed.path if parsed.path else '/'
 
     sock = None
-    # create client socket, connect to server
     try:
+        # create client socket, connect to server
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
+
         if parsed.scheme == 'https':
             context = ssl.create_default_context()
             port = 443
             sock = context.wrap_socket(sock, server_hostname=host)
         else:
             port = 80
-        
+
         sock.connect((host, port))
 
         # send http request
@@ -52,19 +48,72 @@ for url in urls:
         response = b''
         while True:
             data = sock.recv(4096)
-            response += data
             if not data:
                 break
-            
+            response += data
 
         response_text = response.decode('utf-8', errors='ignore')
-        status_line = response_text.split('\r\n')[0]
+        parts = response_text.split('\r\n\r\n', 1)
+        headers = parts[0]
+        body = parts[1] if len(parts) > 1 else ''
+
+        status_line = headers.split('\r\n')[0]
         status = status_line.split(' ', 1)[1]
 
-        print(f"Status: {status}")
+        return status, headers, body
 
-    except Exception as e:
-        print('Status: Network Error')
+    except:
+        return "Network Error", None, None
 
-    if sock:
-        sock.close()
+    finally:
+        if sock:
+            sock.close()
+
+
+for url in urls:
+    url = url.strip()
+    if not url:
+        continue
+
+    print(f"URL: {url}")
+
+    status, headers, body = fetch_url(url)
+    print(f"Status: {status}")
+
+    # Follow URL redirection
+    if status.startswith("301") or status.startswith("302"):
+        if headers:
+            for line in headers.split('\r\n'):
+                if line.lower().startswith("location:"):
+                    redirected_url = line.split(":", 1)[1].strip()
+                    print(f"Redirected URL: {redirected_url}")
+
+                    new_status, _, _ = fetch_url(redirected_url)
+                    print(f"Status: {new_status}")
+                    break
+
+    # Fetch referenced object (images only)
+if body and "<img" in body.lower() and "inet.cs.fiu.edu" in url:
+    matches = re.findall(r'<img[^>]+src=["\']?([^"\'>]+)', body, re.IGNORECASE)
+
+    for img_url in matches:
+
+        # ignore embedded base64 images
+        if img_url.startswith("data:"):
+            continue
+
+        if img_url.startswith("http"):
+            full_img_url = img_url
+        else:
+            parsed = urlparse(url)
+            full_img_url = f"{parsed.scheme}://{parsed.hostname}{img_url}"
+
+        print(f"Referenced URL: {full_img_url}")
+
+        img_status, _, _ = fetch_url(full_img_url)
+        print(f"Status: {img_status}")
+
+
+
+
+
